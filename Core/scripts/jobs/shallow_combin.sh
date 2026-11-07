@@ -12,7 +12,7 @@ export OMP_PLACES=threads
 
 # With sbatch, submit from the repository root or export PROJECT_DIR.
 PROJECT_DIR="${PROJECT_DIR:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}}"
-source "${PROJECT_DIR}/Part1/scripts/environment.sh" || exit 1
+source "${PROJECT_DIR}/Core/scripts/environment.sh" || exit 1
 PARAM_FILE="param_simple.txt"
 
 

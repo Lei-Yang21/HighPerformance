@@ -12,7 +12,7 @@ module load GCC
 
 # With sbatch, submit from the repository root or export PROJECT_DIR.
 PROJECT_DIR="${PROJECT_DIR:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}}"
-source "${PROJECT_DIR}/Part1/scripts/environment.sh" || exit 1
+source "${PROJECT_DIR}/Core/scripts/environment.sh" || exit 1
 
 MAX_THREADS="${SLURM_CPUS_ON_NODE}"
 EXE="${EXEC_DIR}/shallow_openmp"
@@ -37,7 +37,7 @@ for OMP_BIND in close spread; do
   echo   " | Num. threads | Time (from app) | Time (time command) |"
   echo   " +--------------+-----------------+---------------------+"
 
-  for (( NTHREADS=1; NTHREADS<=${MAX_THREADS}; NTHREADS*=2 )); do
+  for (( NTHREADS=32; NTHREADS<=32; NTHREADS*=4 )); do
     export OMP_NUM_THREADS=${NTHREADS}
 
     PARAM_FILE="param_simple_${NTHREADS}.txt"

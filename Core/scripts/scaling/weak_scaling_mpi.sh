@@ -2,7 +2,7 @@
 #
 #SBATCH --exclusive
 #SBATCH --partition=hmem
-#SBATCH --output=job_output_weak_hybrid_%j.out
+#SBATCH --output=job_output_weak_mpi_%j.out
 #SBATCH --time=01:00:00
 #SBATCH --nodes=1
 #SBATCH --mem=0
@@ -12,52 +12,51 @@ module load OpenMPI
 
 # With sbatch, submit from the repository root or export PROJECT_DIR.
 PROJECT_DIR="${PROJECT_DIR:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}}"
-source "${PROJECT_DIR}/Part1/scripts/environment.sh" || exit 1
+source "${PROJECT_DIR}/Core/scripts/environment.sh" || exit 1
 
-MIN_THREADS=2
-MAX_THREADS=8
 MIN_RANKS=${SLURM_NNODES}
-EXE="${EXEC_DIR}/shallow_combin"
+MAX_RANKS=$((SLURM_CPUS_ON_NODE * SLURM_NNODES))
+EXE="${EXEC_DIR}/shallow_mpi"
 
 echo ""
-echo " Weak scaling experiment start (hybrid)"
-echo " ----------------------------------------"
-echo "        Time: $(date)"
-echo "      Job id: ${SLURM_JOBID}"
-echo "       Nodes: $(scontrol show hostnames ${SLURM_JOB_NODELIST} | paste -s -d ' ')"
-echo " Max threads: ${MAX_THREADS}"
-echo " ---------------------------------------"
+echo " Weak scaling experiment start (MPI)"
+echo " -------------------------------------"
+echo "      Time: $(date)"
+echo "    Job id: ${SLURM_JOBID}"
+echo "     Nodes: $(scontrol show hostnames ${SLURM_JOB_NODELIST} | paste -s -d ' ')"
+echo " Max ranks: ${MAX_RANKS}"
+echo " ------------------------------------"
 echo ""
 
-for (( NTHREADS=${MIN_THREADS}; NTHREADS<=${MAX_THREADS}; NTHREADS*=2 )); do
-  export OMP_NUM_THREADS=${NTHREADS}
-  export OMP_PROC_BIND=close
+for BIND in close spread; do
 
   echo   ""
   echo   " +----------------------------------------------------+"
-  printf " | Weak scaling with %2s threads per rank              |\n" ${NTHREADS}
+  printf " | Weak scaling with processes %6s                 |\n" ${BIND}
   echo   " +------------+-----------------+---------------------+"
   echo   " | Num. ranks | Time (from app) | Time (time command) |"
   echo   " +------------+-----------------+---------------------+"
 
-  MAX_RANKS=$((SLURM_CPUS_ON_NODE / NTHREADS * SLURM_NNODES))
-
   for (( NRANKS=${MIN_RANKS}; NRANKS<=${MAX_RANKS}; NRANKS*=2 )); do
+    export OMP_NUM_THREADS=1
+
     SRUN_OPTS="--nodes=${SLURM_NNODES}"
     SRUN_OPTS="${SRUN_OPTS} --ntasks-per-node=$((NRANKS / SLURM_NNODES))"
-    SRUN_OPTS="${SRUN_OPTS} --cpus-per-task=${NTHREADS}"
 
-    # total cores = ranks × threads
-    TOTAL_CORES=$((NRANKS * NTHREADS))
+    if [[ ${BIND} == spread ]]; then
+      SRUN_OPTS="${SRUN_OPTS} --cpus-per-task=$((SLURM_CPUS_ON_NODE * SLURM_NNODES / NRANKS ))"
+    else
+      SRUN_OPTS="${SRUN_OPTS} --cpus-per-task=1"
+    fi
 
-    # choisir le fichier param_simple_TOTAL_CORES.txt
-    PARAM_FILE="param_simple_${TOTAL_CORES}.txt"
+    PARAM_FILE="param_simple_${NRANKS}.txt"
     EXE_ARGS="${CONFIG_DIR}/${PARAM_FILE}"
 
-    OUTPUT_DIR="${RESULTS_DIR}/results_weak_hybrid_${SLURM_JOBID}/run-${NRANKS}ranks-${NTHREADS}threads"
-    OUTPUT_FILE=$(basename "${EXE}")-${NRANKS}ranks-${NTHREADS}threads.out
+    OUTPUT_DIR="${RESULTS_DIR}/results_weak_mpi_${SLURM_JOBID}/run-${NRANKS}ranks-${BIND}"
+    OUTPUT_FILE=$(basename "${EXE}")-${NRANKS}ranks.out
 
     mkdir -p "${OUTPUT_DIR}" || exit 1
+
     pushd "${OUTPUT_DIR}" &> /dev/null || exit 1
 
     cp "${DATA_DIR}/h_simple.dat" . || exit 1
@@ -66,9 +65,6 @@ for (( NTHREADS=${MIN_THREADS}; NTHREADS<=${MAX_THREADS}; NTHREADS*=2 )); do
 
     TIME_FROM_OUTPUT=$(sed -n -E 's/CPU Time: (.*) sec/\1/p' ${OUTPUT_FILE})
     TIME_FROM_TIME_CMD=$(cat time.out)
-
-    if [[ -z "${TIME_FROM_OUTPUT}" ]]; then TIME_FROM_OUTPUT="NaN"; fi
-    if [[ -z "${TIME_FROM_TIME_CMD}" ]]; then TIME_FROM_TIME_CMD="NaN"; fi
 
     printf " | %10s | %15s | %19s |\n" ${NRANKS} ${TIME_FROM_OUTPUT} ${TIME_FROM_TIME_CMD}
 

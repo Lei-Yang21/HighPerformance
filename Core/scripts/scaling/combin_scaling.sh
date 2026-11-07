@@ -2,7 +2,7 @@
 #
 #SBATCH --exclusive
 #SBATCH --partition=hmem
-#SBATCH --output=job_output_strong_mpi_%j.out
+#SBATCH --output=job_output_strong_hybrid_%j.out
 #SBATCH --time=01:00:00
 #SBATCH --nodes=1
 #SBATCH --mem=0
@@ -12,50 +12,47 @@ module load OpenMPI
 
 # With sbatch, submit from the repository root or export PROJECT_DIR.
 PROJECT_DIR="${PROJECT_DIR:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}}"
-source "${PROJECT_DIR}/Part1/scripts/environment.sh" || exit 1
+source "${PROJECT_DIR}/Core/scripts/environment.sh" || exit 1
 PARAM_FILE="param_simple.txt"
 
+MIN_THREADS=2
+MAX_THREADS=8
 MIN_RANKS=${SLURM_NNODES}
-MAX_RANKS=$((SLURM_CPUS_ON_NODE * SLURM_NNODES))
-EXE="${EXEC_DIR}/shallow_mpi"
+EXE="${EXEC_DIR}/shallow_combin"
 EXE_ARGS="${CONFIG_DIR}/${PARAM_FILE}"
 
 echo ""
-echo " Strong scaling experiment start (MPI)"
-echo " -------------------------------------"
-echo "      Time: $(date)"
-echo "    Job id: ${SLURM_JOBID}"
-echo "     Nodes: $(scontrol show hostnames ${SLURM_JOB_NODELIST} | paste -s -d ' ')"
-echo " Max ranks: ${MAX_RANKS}"
-echo " ------------------------------------"
+echo " Strong scaling experiment start (hybrid)"
+echo " ----------------------------------------"
+echo "        Time: $(date)"
+echo "      Job id: ${SLURM_JOBID}"
+echo "       Nodes: $(scontrol show hostnames ${SLURM_JOB_NODELIST} | paste -s -d ' ')"
+echo " Max threads: ${MAX_THREADS}"
+echo " ---------------------------------------"
 echo ""
 
-for BIND in close spread; do
+for (( NTHREADS=${MIN_THREADS}; NTHREADS<=${MAX_THREADS}; NTHREADS*=2 )); do
+  export OMP_NUM_THREADS=${NTHREADS}
+  export OMP_PROC_BIND=close
 
   echo   ""
   echo   " +----------------------------------------------------+"
-  printf " | Strong scaling with processes %6s               |\n" ${BIND}
+  printf " | Strong scaling with %2s threads                     |\n" ${NTHREADS}
   echo   " +------------+-----------------+---------------------+"
   echo   " | Num. ranks | Time (from app) | Time (time command) |"
   echo   " +------------+-----------------+---------------------+"
 
-  for (( NRANKS=${MIN_RANKS}; NRANKS<=${MAX_RANKS}; NRANKS*=2 )); do
-    export OMP_NUM_THREADS=1
+  MAX_RANKS=$((SLURM_CPUS_ON_NODE / NTHREADS * SLURM_NNODES))
 
+  for (( NRANKS=${MIN_RANKS}; NRANKS<=${MAX_RANKS}; NRANKS*=2 )); do
     SRUN_OPTS="--nodes=${SLURM_NNODES}"
     SRUN_OPTS="${SRUN_OPTS} --ntasks-per-node=$((NRANKS / SLURM_NNODES))"
+    SRUN_OPTS="${SRUN_OPTS} --cpus-per-task=${NTHREADS}"
 
-    if [[ ${BIND} == spread ]]; then
-      SRUN_OPTS="${SRUN_OPTS} --cpus-per-task=$((SLURM_CPUS_ON_NODE * SLURM_NNODES / NRANKS ))"
-    else
-      SRUN_OPTS="${SRUN_OPTS} --cpus-per-task=1"
-    fi
-
-    OUTPUT_DIR="${RESULTS_DIR}/results_strong_mpi_${SLURM_JOBID}/run-${NRANKS}ranks-${BIND}"
-    OUTPUT_FILE=$(basename "${EXE}")-${NRANKS}ranks.out
+    OUTPUT_DIR="${RESULTS_DIR}/results_strong_hybrid_${SLURM_JOBID}/run-${NRANKS}ranks-${NTHREADS}threads"
+    OUTPUT_FILE=$(basename "${EXE}")-${NRANKS}ranks-${NTHREADS}threads.out
 
     mkdir -p "${OUTPUT_DIR}" || exit 1
-
     pushd "${OUTPUT_DIR}" &> /dev/null || exit 1
 
     cp "${DATA_DIR}/h_simple.dat" . || exit 1

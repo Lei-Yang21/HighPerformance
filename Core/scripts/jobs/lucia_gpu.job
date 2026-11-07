@@ -15,11 +15,11 @@ export OMP_TARGET_OFFLOAD=MANDATORY
 
 # With sbatch, submit from the repository root or export PROJECT_DIR.
 PROJECT_DIR="${PROJECT_DIR:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}}"
-source "${PROJECT_DIR}/Part1/scripts/environment.sh" || exit 1
+source "${PROJECT_DIR}/Core/scripts/environment.sh" || exit 1
 
 mkdir -p "${EXEC_DIR}" || exit 1
 clang -O3 -fopenmp -fopenmp-targets=nvptx64-nvidia-cuda \
-  -o "${EXEC_DIR}/shallow_gpu" "${PROJECT_DIR}/Part1/src/shallow_gpu.c" -lm || exit 1
+  -o "${EXEC_DIR}/shallow_gpu" "${PROJECT_DIR}/Core/src/shallow_gpu.c" -lm || exit 1
 
 prepare_run "${RESULTS_DIR}/gpu_${SLURM_JOB_ID:-local}" || exit 1
 "${EXEC_DIR}/shallow_gpu" "${CONFIG_DIR}/param_simple.txt"

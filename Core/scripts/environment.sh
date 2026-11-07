@@ -1,9 +1,9 @@
 #!/bin/bash
-# Shared paths for the Part1 jobs and scaling experiments.
+# Shared paths for the Core jobs and scaling experiments.
 # PROJECT_DIR is resolved by the caller because Slurm copies submitted scripts.
 EXEC_DIR="${PROJECT_DIR}/bin"
-CONFIG_DIR="${PROJECT_DIR}/Part1/config"
-DATA_DIR="${PROJECT_DIR}/Part1/data"
+CONFIG_DIR="${PROJECT_DIR}/Core/config"
+DATA_DIR="${PROJECT_DIR}/Core/data"
 RESULTS_DIR="${PROJECT_DIR}/results"
 
 prepare_run() {
