@@ -37,32 +37,6 @@ static inline double get_value(const struct data *data, int i ,int j){
 static inline void set_value(struct data *data, int i, int j , double val){
     data->values[(data->nx * j) + i] = val;}
 
-static inline double *top_row(struct data *data){
-    return &(data->values[0]);}
-
-static inline double *internal_first_row(struct data *data){
-    return &(data->values[data->nx]);}
-
-static inline double *internal_last_row(struct data *data){
-    return &(data->values[(data->ny - 2) * data->nx]);
-}
-
-static inline double *bottom_row(struct data *data){
-    return &(data->values[(data->ny - 1) * data->nx]);}
-
-static inline double *left_col(struct data *data, int j){
-    return &(data->values[j * data->nx]);}
-
-static inline double *internal_first_col(struct data *data, int j){
-    return &(data->values[j * data->nx + 1]);}
-
-static inline double *internal_last_col(struct data *data, int j){
-    return &(data->values[j * data->nx + data->nx - 2]);}
-
-static inline double *right_col(struct data *data, int j){
-    return &(data->values[j * data->nx + data->nx - 1]);}
-
-
 int read_parameters(struct parameters *param, const char *filename)
 {
   FILE *fp = fopen(filename, "r");
@@ -277,7 +251,6 @@ int init_data(struct data *data, int nx, int ny, int offsetx, int offsety, doubl
   data->offsety = offsety;
   data->dx = dx;
   data->dy = dy;
-  // Need to allocate more for ghost cells
   data->values = (double*)malloc((nx) * (ny) * sizeof(double));
   if(!data->values){
     printf("Error: Could not allocate data\n");
@@ -434,56 +407,20 @@ void neighbor_ranks(int rank,int px, int py,int *up_rank, int *down_rank,int *le
     } 
 }
 
-void update(struct data *data,int left_rank, int right_rank,int top_rank, int down_rank,double *send_left, double *recv_left,double *send_right, double *recv_right)
+static int split_axis(int length, int parts, int index, int *offset)
 {
-    int ny = data->ny;
-    int nx = data->nx;
+    int base = length / parts;
+    int remainder = length % parts;
 
-    MPI_Request request[8];
-    int count = 0;
-    if (left_rank != MPI_PROC_NULL) 
-    {
-        for (int i = 0; i < ny; i++) 
-            send_left[i] = *internal_first_col(data, i);
-
-        MPI_Isend(send_left, ny, MPI_DOUBLE, left_rank, 0, MPI_COMM_WORLD, &request[count++]);
-        MPI_Irecv(recv_left, ny, MPI_DOUBLE, left_rank, 0, MPI_COMM_WORLD, &request[count++]);
-    }
-    if (right_rank != MPI_PROC_NULL) 
-    {
-        for (int i = 0; i < ny; i++) 
-            send_right[i] = *internal_last_col(data, i);
-
-        MPI_Isend(send_right, ny, MPI_DOUBLE, right_rank, 0, MPI_COMM_WORLD, &request[count++]);
-        MPI_Irecv(recv_right, ny, MPI_DOUBLE, right_rank, 0, MPI_COMM_WORLD, &request[count++]);
-    }
-    if (top_rank != MPI_PROC_NULL) 
-    {
-        MPI_Isend(internal_first_row(data), nx, MPI_DOUBLE, top_rank, 0, MPI_COMM_WORLD, &request[count++]);
-        MPI_Irecv(top_row(data), nx, MPI_DOUBLE, top_rank, 0, MPI_COMM_WORLD, &request[count++]);
+    // The first 'remainder' blocks each get one extra cell.
+    if (index < remainder) {
+        *offset = index * (base + 1);
+        return base + 1;
     }
 
-    if (down_rank != MPI_PROC_NULL) 
-    {
-        MPI_Isend(internal_last_row(data), nx, MPI_DOUBLE, down_rank, 0, MPI_COMM_WORLD, &request[count++]);
-        MPI_Irecv(bottom_row(data), nx, MPI_DOUBLE, down_rank, 0, MPI_COMM_WORLD, &request[count++]);
-    }
-
-    if (count > 0) 
-        MPI_Waitall(count, request, MPI_STATUSES_IGNORE);
-
-    if (left_rank != MPI_PROC_NULL) 
-    {
-        for (int i = 0; i < ny; i++) 
-            *left_col(data, i) = recv_left[i];
-    }
-
-    if (right_rank != MPI_PROC_NULL) 
-    {
-        for (int i = 0; i < ny; i++) 
-            *right_col(data, i) = recv_right[i];
-    }
-
+    // All extra cells are in the blocks that come before this one.
+    *offset = index * base + remainder;
+    return base;
 }
 
 void number_partitions(int world_size, int *Px, int *Py) 
@@ -574,11 +511,11 @@ int main(int argc, char **argv)
     int Px = 0;
     int Py = 0;
     number_partitions(world_size, &Px, &Py);
-    if (Py == 0 || Px == 0)
+    if (Py == 0 || Px == 0 || Px > nx || Py > ny)
     {
         if (rank == 0) 
         {
-            printf("Error: Cannot determine partitions for %d ranks\n", world_size);
+            printf("Error: Cannot partition a %d x %d grid among %d ranks\n", nx, ny, world_size);
 
         }
         free_data(&h);
@@ -592,8 +529,9 @@ int main(int argc, char **argv)
             printf(" - number of ranks: %d (%d x %d)\n", world_size, Px, Py);
         }
     }
-    int sub_nx = nx / Px;
-    int sub_ny = ny / Py;
+    int offset_x, offset_y;
+    int sub_nx = split_axis(nx, Px, rank % Px, &offset_x);
+    int sub_ny = split_axis(ny, Py, rank / Px, &offset_y);
     int top_rank = MPI_PROC_NULL;
     int bottom_rank = MPI_PROC_NULL;
     int left_rank = MPI_PROC_NULL;
@@ -604,15 +542,15 @@ int main(int argc, char **argv)
 
 
     struct data eta, u, v;
-    init_data(&eta, sub_nx, sub_ny, sub_nx * (rank % Px), sub_ny * (rank / Px), param.dx, param.dy, 0.);
-    init_data(&u, sub_nx + 1, sub_ny, sub_nx * (rank % Px), sub_ny * (rank / Px), param.dx, param.dy, 0.);
-    init_data(&v, sub_nx, sub_ny + 1, sub_nx * (rank % Px), sub_ny * (rank / Px), param.dx, param.dy, 0.);
+    init_data(&eta, sub_nx, sub_ny, offset_x, offset_y, param.dx, param.dy, 0.);
+    init_data(&u, sub_nx + 1, sub_ny, offset_x, offset_y, param.dx, param.dy, 0.);
+    init_data(&v, sub_nx, sub_ny + 1, offset_x, offset_y, param.dx, param.dy, 0.);
     
     // Interpolation initialization
     struct data h_u;
     struct data h_v;
-    init_data(&h_u,sub_nx + 1, sub_ny, sub_nx * (rank % Px), sub_ny * (rank / Px), param.dx, param.dy, 0.);
-    init_data(&h_v, sub_nx, sub_ny + 1, sub_nx * (rank % Px), sub_ny * (rank / Px), param.dx, param.dy, 0.);
+    init_data(&h_u, sub_nx + 1, sub_ny, offset_x, offset_y, param.dx, param.dy, 0.);
+    init_data(&h_v, sub_nx, sub_ny + 1, offset_x, offset_y, param.dx, param.dy, 0.);
 
     if(check_malloc(&eta, &u, &v, &h_u, &h_v, &h))
     {
@@ -625,8 +563,8 @@ int main(int argc, char **argv)
     {
         for(int i = 0; i < sub_nx+1; i++) 
         {
-            double h_xu = i * param.dx;
-            double h_yu = (j+0.5) * param.dy;
+            double h_xu = (offset_x + i) * param.dx;
+            double h_yu = (offset_y + j + 0.5) * param.dy;
             double val = interpolate_data(&h, h_xu, h_yu,invdx,invdy,param.dx,param.dy);
             set_value(&h_u, i, j, val);
         }
@@ -635,28 +573,26 @@ int main(int argc, char **argv)
     {
         for(int i = 0; i < sub_nx; i++) 
         {
-            double h_xv = (i+0.5) * param.dx;
-            double h_yv = j * param.dy;
+            double h_xv = (offset_x + i + 0.5) * param.dx;
+            double h_yv = (offset_y + j) * param.dy;
             double val = interpolate_data(&h, h_xv, h_yv,invdx,invdy,param.dx,param.dy);
             set_value(&h_v, i, j, val);
         }
     }
 
-    double *send_buffer = (double *)calloc(ny, sizeof(double));
-    double *recv_buffer = (double *)calloc(ny, sizeof(double));
-    double *send_buffer2 = (double *)calloc(ny, sizeof(double));
-    double *recv_buffer2 = (double *)calloc(ny, sizeof(double));
-
-    if (send_buffer == NULL || recv_buffer == NULL || send_buffer2 == NULL || recv_buffer2 == NULL) 
+    double *eta_left = malloc(sub_ny * sizeof(*eta_left));
+    double *eta_previous_row = malloc(sub_nx * sizeof(*eta_previous_row));
+    if (!eta_left || !eta_previous_row)
     {
-        printf("Error: Could not allocate memory for send/receive buffers\n");
-        free_all(&eta, &u, &v, &h_u, &h_v, &h);
-        MPI_Finalize();
-        return 1;
+        fprintf(stderr, "Error: Could not allocate elevation halos\n");
+        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
-    update(&h_u, left_rank, right_rank, top_rank, bottom_rank, send_buffer, recv_buffer, send_buffer2, recv_buffer2);
-    update(&h_v, left_rank, right_rank, top_rank, bottom_rank, send_buffer, recv_buffer, send_buffer2, recv_buffer2);
+    MPI_Datatype eta_column, u_column;
+    MPI_Type_vector(sub_ny, 1, eta.nx, MPI_DOUBLE, &eta_column);
+    MPI_Type_commit(&eta_column);
+    MPI_Type_vector(sub_ny, 1, u.nx, MPI_DOUBLE, &u_column);
+    MPI_Type_commit(&u_column);
 
     double start = GET_TIME();
 
@@ -685,21 +621,18 @@ int main(int argc, char **argv)
         // impose boundary conditions
         double t = n * param.dt;
         double sin_t = sin(alpha * t);
-        double v_speed = 0.;
-        if(rank / Px == Py - 1)
-            v_speed = A * sin_t;
         if(param.source_type == 1) 
         {
             // sinusoidal velocity on top boundary
             for(int j = 0; j < sub_ny; j++)
             {
-                set_value(&u, 0, j, 0.);
-                set_value(&u, sub_nx, j, 0.);
+                if (left_rank == MPI_PROC_NULL) set_value(&u, 0, j, 0.);
+                if (right_rank == MPI_PROC_NULL) set_value(&u, sub_nx, j, 0.);
             }
             for(int i = 0; i < sub_nx; i++) 
             {
-                set_value(&v, i, 0, 0.);
-                set_value(&v, i, sub_ny, v_speed);
+                if (top_rank == MPI_PROC_NULL) set_value(&v, i, 0, 0.);
+                if (bottom_rank == MPI_PROC_NULL) set_value(&v, i, sub_ny, A * sin_t);
             }
         }
         
@@ -723,10 +656,10 @@ int main(int argc, char **argv)
         {
             printf("Error: Unknown source type %d\n", param.source_type);
             free_all(&eta, &u, &v, &h_u, &h_v, &h);
-            free(send_buffer);
-            free(recv_buffer);
-            free(send_buffer2);
-            free(recv_buffer2);
+            free(eta_left);
+            free(eta_previous_row);
+            MPI_Type_free(&eta_column);
+            MPI_Type_free(&u_column);
             MPI_Finalize();
             exit(0);
         }
@@ -743,7 +676,13 @@ int main(int argc, char **argv)
                 set_value(&eta, i, j, eta_ij);
             }
         }
-        update(&eta, left_rank, right_rank, top_rank, bottom_rank, send_buffer, recv_buffer, send_buffer2, recv_buffer2);
+        // Receive neighboring elevations without overwriting physical cells.
+        MPI_Sendrecv(eta.values + sub_nx - 1, 1, eta_column, right_rank, 0,
+                     eta_left, sub_ny, MPI_DOUBLE, left_rank, 0,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Sendrecv(eta.values + (sub_ny - 1) * sub_nx, sub_nx, MPI_DOUBLE, bottom_rank, 1,
+                     eta_previous_row, sub_nx, MPI_DOUBLE, top_rank, 1,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
         // update u and v
         for(int j = 0; j < sub_ny; j++) 
@@ -751,16 +690,35 @@ int main(int argc, char **argv)
             for(int i = 0; i < sub_nx; i++) 
             {
                 double eta_ij = get_value(&eta, i, j);
-                double eta_imj = get_value(&eta, (i == 0) ? 0 : i - 1, j);
-                double eta_ijm = get_value(&eta, i, (j == 0) ? 0 : j - 1);
+
+                // At a physical boundary, use eta_ij so the gradient is zero.
+                double eta_imj = eta_ij;
+                if (i > 0) {
+                    eta_imj = get_value(&eta, i - 1, j);
+                } else if (left_rank != MPI_PROC_NULL) {
+                    eta_imj = eta_left[j];
+                }
+
+                double eta_ijm = eta_ij;
+                if (j > 0) {
+                    eta_ijm = get_value(&eta, i, j - 1);
+                } else if (top_rank != MPI_PROC_NULL) {
+                    eta_ijm = eta_previous_row[i];
+                }
+
                 double u_ij = (1. - c2) * get_value(&u, i, j)- (c1_dx) * (eta_ij - eta_imj);
                 double v_ij = (1. - c2) * get_value(&v, i, j)- (c1_dy) * (eta_ij - eta_ijm);
                 set_value(&u, i, j, u_ij);
                 set_value(&v, i, j, v_ij);
             }
         }
-        update(&u, left_rank, right_rank, top_rank, bottom_rank, send_buffer, recv_buffer, send_buffer2, recv_buffer2);
-        update(&v, left_rank, right_rank, top_rank, bottom_rank, send_buffer, recv_buffer, send_buffer2, recv_buffer2);
+        // Fill the extra velocity column and row for the next elevation update.
+        MPI_Sendrecv(u.values, 1, u_column, left_rank, 2,
+                     u.values + sub_nx, 1, u_column, right_rank, 2,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Sendrecv(v.values, sub_nx, MPI_DOUBLE, top_rank, 3,
+                     v.values + sub_ny * sub_nx, sub_nx, MPI_DOUBLE, bottom_rank, 3,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         MPI_Barrier(MPI_COMM_WORLD); // Synchronize all ranks after each time step
     }
 
@@ -776,10 +734,10 @@ int main(int argc, char **argv)
     }
     
     free_all(&eta, &u, &v, &h_u, &h_v, &h);
-    free(send_buffer);
-    free(recv_buffer);
-    free(send_buffer2);
-    free(recv_buffer2);
+    free(eta_left);
+    free(eta_previous_row);
+    MPI_Type_free(&eta_column);
+    MPI_Type_free(&u_column);
     MPI_Finalize();
     return 0;
 }
