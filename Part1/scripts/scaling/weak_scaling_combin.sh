@@ -2,7 +2,7 @@
 #
 #SBATCH --exclusive
 #SBATCH --partition=hmem
-#SBATCH --output=job_output_strong_hybrid_%j.out
+#SBATCH --output=job_output_weak_hybrid_%j.out
 #SBATCH --time=01:00:00
 #SBATCH --nodes=1
 #SBATCH --mem=0
@@ -10,19 +10,17 @@
 module purge
 module load OpenMPI
 
-PROJECT_DIR="${HOME}/project_info0939-1"
-EXEC_DIR="${PROJECT_DIR}/bin"
-INPUT_DIR="${PROJECT_DIR}"
-PARAM_FILE="param_simple.txt"
+# With sbatch, submit from the repository root or export PROJECT_DIR.
+PROJECT_DIR="${PROJECT_DIR:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}}"
+source "${PROJECT_DIR}/Part1/scripts/environment.sh" || exit 1
 
 MIN_THREADS=2
 MAX_THREADS=8
 MIN_RANKS=${SLURM_NNODES}
 EXE="${EXEC_DIR}/shallow_combin"
-EXE_ARGS="${INPUT_DIR}/${PARAM_FILE}"
 
 echo ""
-echo " Strong scaling experiment start (hybrid)"
+echo " Weak scaling experiment start (hybrid)"
 echo " ----------------------------------------"
 echo "        Time: $(date)"
 echo "      Job id: ${SLURM_JOBID}"
@@ -37,7 +35,7 @@ for (( NTHREADS=${MIN_THREADS}; NTHREADS<=${MAX_THREADS}; NTHREADS*=2 )); do
 
   echo   ""
   echo   " +----------------------------------------------------+"
-  printf " | Strong scaling with %2s threads                     |\n" ${NTHREADS}
+  printf " | Weak scaling with %2s threads per rank              |\n" ${NTHREADS}
   echo   " +------------+-----------------+---------------------+"
   echo   " | Num. ranks | Time (from app) | Time (time command) |"
   echo   " +------------+-----------------+---------------------+"
@@ -49,20 +47,30 @@ for (( NTHREADS=${MIN_THREADS}; NTHREADS<=${MAX_THREADS}; NTHREADS*=2 )); do
     SRUN_OPTS="${SRUN_OPTS} --ntasks-per-node=$((NRANKS / SLURM_NNODES))"
     SRUN_OPTS="${SRUN_OPTS} --cpus-per-task=${NTHREADS}"
 
-    OUTPUT_DIR="results_strong_hybrid_${SLURM_JOBID}/run-${NRANKS}ranks-${NTHREADS}threads"
-    OUTPUT_FILE=$(basename ${EXE})-${NRANKS}ranks-${NTHREADS}threads.out
+    # total cores = ranks × threads
+    TOTAL_CORES=$((NRANKS * NTHREADS))
 
-    mkdir -p ${OUTPUT_DIR}
-    pushd ${OUTPUT_DIR} &> /dev/null
+    # choisir le fichier param_simple_TOTAL_CORES.txt
+    PARAM_FILE="param_simple_${TOTAL_CORES}.txt"
+    EXE_ARGS="${CONFIG_DIR}/${PARAM_FILE}"
 
-    cp ${INPUT_DIR}/h_simple.dat .
+    OUTPUT_DIR="${RESULTS_DIR}/results_weak_hybrid_${SLURM_JOBID}/run-${NRANKS}ranks-${NTHREADS}threads"
+    OUTPUT_FILE=$(basename "${EXE}")-${NRANKS}ranks-${NTHREADS}threads.out
 
-    /usr/bin/time -f '%e' -o 'time.out' srun ${SRUN_OPTS} ${EXE} ${EXE_ARGS} > ${OUTPUT_FILE}
+    mkdir -p "${OUTPUT_DIR}" || exit 1
+    pushd "${OUTPUT_DIR}" &> /dev/null || exit 1
+
+    cp "${DATA_DIR}/h_simple.dat" . || exit 1
+
+    /usr/bin/time -f '%e' -o 'time.out' srun ${SRUN_OPTS} "${EXE}" "${EXE_ARGS}" > "${OUTPUT_FILE}"
 
     TIME_FROM_OUTPUT=$(sed -n -E 's/CPU Time: (.*) sec/\1/p' ${OUTPUT_FILE})
     TIME_FROM_TIME_CMD=$(cat time.out)
 
-    printf " | %10s | %15.3f | %19.3f |\n" ${NRANKS} ${TIME_FROM_OUTPUT} ${TIME_FROM_TIME_CMD}
+    if [[ -z "${TIME_FROM_OUTPUT}" ]]; then TIME_FROM_OUTPUT="NaN"; fi
+    if [[ -z "${TIME_FROM_TIME_CMD}" ]]; then TIME_FROM_TIME_CMD="NaN"; fi
+
+    printf " | %10s | %15s | %19s |\n" ${NRANKS} ${TIME_FROM_OUTPUT} ${TIME_FROM_TIME_CMD}
 
     popd &> /dev/null
   done
@@ -75,4 +83,4 @@ echo ""
 echo " -----------------------------"
 echo " End Time: $(date)"
 echo " -----------------------------"
-echo " Strong scaling experiment end"
+echo " Weak scaling experiment end"

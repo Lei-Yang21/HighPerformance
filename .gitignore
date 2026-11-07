@@ -1,0 +1,16 @@
+# Compiled executables and simulation / profiling output
+/bin/
+/results/
+/job_output_*.out
+/shallow_serial_*.out
+/opti_*.out
+/openmp_*.out
+/mpi_*.out
+/combi_*.out
+/saxpy_gpu.out
+/scalasca_profile_*.out
+
+# Python / Jupyter local files
+__pycache__/
+.ipynb_checkpoints/
+.venv/

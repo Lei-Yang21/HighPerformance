@@ -2,7 +2,7 @@
 #
 #SBATCH --exclusive
 #SBATCH --partition=hmem
-#SBATCH --output=job_output_weak_mpi_%j.out
+#SBATCH --output=job_output_strong_mpi_%j.out
 #SBATCH --time=01:00:00
 #SBATCH --nodes=1
 #SBATCH --mem=0
@@ -10,16 +10,18 @@
 module purge
 module load OpenMPI
 
-PROJECT_DIR="${HOME}/project_info0939-1"
-EXEC_DIR="${PROJECT_DIR}/bin"
-INPUT_DIR="${PROJECT_DIR}"
+# With sbatch, submit from the repository root or export PROJECT_DIR.
+PROJECT_DIR="${PROJECT_DIR:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}}"
+source "${PROJECT_DIR}/Part1/scripts/environment.sh" || exit 1
+PARAM_FILE="param_simple.txt"
 
 MIN_RANKS=${SLURM_NNODES}
 MAX_RANKS=$((SLURM_CPUS_ON_NODE * SLURM_NNODES))
 EXE="${EXEC_DIR}/shallow_mpi"
+EXE_ARGS="${CONFIG_DIR}/${PARAM_FILE}"
 
 echo ""
-echo " Weak scaling experiment start (MPI)"
+echo " Strong scaling experiment start (MPI)"
 echo " -------------------------------------"
 echo "      Time: $(date)"
 echo "    Job id: ${SLURM_JOBID}"
@@ -32,7 +34,7 @@ for BIND in close spread; do
 
   echo   ""
   echo   " +----------------------------------------------------+"
-  printf " | Weak scaling with processes %6s                 |\n" ${BIND}
+  printf " | Strong scaling with processes %6s               |\n" ${BIND}
   echo   " +------------+-----------------+---------------------+"
   echo   " | Num. ranks | Time (from app) | Time (time command) |"
   echo   " +------------+-----------------+---------------------+"
@@ -49,24 +51,21 @@ for BIND in close spread; do
       SRUN_OPTS="${SRUN_OPTS} --cpus-per-task=1"
     fi
 
-    PARAM_FILE="param_simple_${NRANKS}.txt"
-    EXE_ARGS="${INPUT_DIR}/${PARAM_FILE}"
+    OUTPUT_DIR="${RESULTS_DIR}/results_strong_mpi_${SLURM_JOBID}/run-${NRANKS}ranks-${BIND}"
+    OUTPUT_FILE=$(basename "${EXE}")-${NRANKS}ranks.out
 
-    OUTPUT_DIR="results_weak_mpi_${SLURM_JOBID}/run-${NRANKS}ranks-${BIND}"
-    OUTPUT_FILE=$(basename ${EXE})-${NRANKS}ranks.out
+    mkdir -p "${OUTPUT_DIR}" || exit 1
 
-    mkdir -p ${OUTPUT_DIR}
-    
-    pushd ${OUTPUT_DIR} &> /dev/null
+    pushd "${OUTPUT_DIR}" &> /dev/null || exit 1
 
-    cp ${INPUT_DIR}/h_simple.dat .
+    cp "${DATA_DIR}/h_simple.dat" . || exit 1
 
-    /usr/bin/time -f '%e' -o 'time.out' srun ${SRUN_OPTS} ${EXE} ${EXE_ARGS} > ${OUTPUT_FILE}
+    /usr/bin/time -f '%e' -o 'time.out' srun ${SRUN_OPTS} "${EXE}" "${EXE_ARGS}" > "${OUTPUT_FILE}"
 
     TIME_FROM_OUTPUT=$(sed -n -E 's/CPU Time: (.*) sec/\1/p' ${OUTPUT_FILE})
     TIME_FROM_TIME_CMD=$(cat time.out)
 
-    printf " | %10s | %15s | %19s |\n" ${NRANKS} ${TIME_FROM_OUTPUT} ${TIME_FROM_TIME_CMD}
+    printf " | %10s | %15.3f | %19.3f |\n" ${NRANKS} ${TIME_FROM_OUTPUT} ${TIME_FROM_TIME_CMD}
 
     popd &> /dev/null
   done
@@ -79,4 +78,4 @@ echo ""
 echo " -----------------------------"
 echo " End Time: $(date)"
 echo " -----------------------------"
-echo " Weak scaling experiment end"
+echo " Strong scaling experiment end"

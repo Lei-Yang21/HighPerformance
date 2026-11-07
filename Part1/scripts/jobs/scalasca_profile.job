@@ -11,9 +11,14 @@
 # Loading Scalasca will also load OpenMPI
 module load Scalasca
 
+# With sbatch, submit from the repository root or export PROJECT_DIR.
+PROJECT_DIR="${PROJECT_DIR:-${SLURM_SUBMIT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}}"
+source "${PROJECT_DIR}/Part1/scripts/environment.sh" || exit 1
+
 export OMP_PROC_BIND=true
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
 
 export SRUN_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK}
 
-scalasca -analyze srun ./shallow_combin param_simple.txt
+prepare_run "${RESULTS_DIR}/profile_${SLURM_JOB_ID:-local}" || exit 1
+scalasca -analyze srun "${EXEC_DIR}/shallow_combin" "${CONFIG_DIR}/param_simple.txt"
